@@ -1,5 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import { 
   calculateFutureValueProgressionWithCosts, 
   formatCurrency, 
@@ -95,6 +97,7 @@ const App: React.FC = () => {
   const [monthlyRetirementIncome, setMonthlyRetirementIncome] = useState(''); 
   const [currentAge, setCurrentAge] = useState('');
   const [retirementAge, setRetirementAge] = useState('');
+  const [contributionEndAge, setContributionEndAge] = useState('');
   const [monthlyContribution, setMonthlyContribution] = useState(''); 
   const [familyIncome, setFamilyIncome] = useState('');
   
@@ -106,6 +109,13 @@ const App: React.FC = () => {
     const cAge = parseInt(currentAge, 10) || 0;
     return Math.max(0, rAge - cAge);
   }, [retirementAge, currentAge]);
+
+  const contributionYears = useMemo(() => {
+    const endAge = parseInt(contributionEndAge, 10);
+    const cAge = parseInt(currentAge, 10) || 0;
+    if (isNaN(endAge)) return desiredYears;
+    return Math.max(0, endAge - cAge);
+  }, [contributionEndAge, currentAge, desiredYears]);
 
   const getGoalForRate = (rate: number) => {
     const monthlyIncome = (parseFloat(monthlyRetirementIncome) || 0) / 100;
@@ -121,12 +131,12 @@ const App: React.FC = () => {
     const mc = (parseFloat(monthlyContribution) || 0) / 100;
     const results = [];
     for (let r = 1; r <= 20; r++) {
-      const finalVal = calculateFutureValue(iv, mc, desiredYears, r);
+      const finalVal = calculateFutureValue(iv, mc, desiredYears, r, contributionYears);
       const incomeAt4Percent = (finalVal * 0.04) / 12;
       results.push({ rate: r, finalValue: finalVal, monthlyIncome: incomeAt4Percent });
     }
     return results;
-  }, [initialValue, monthlyContribution, desiredYears]);
+  }, [initialValue, monthlyContribution, desiredYears, contributionYears]);
 
   const resultsByRate = useMemo(() => {
     const res = [];
@@ -136,13 +146,13 @@ const App: React.FC = () => {
     const avc = parseFloat(annualVariableCost) || 0;
 
     for (let rate = 1; rate <= 20; rate++) {
-      const yearsWithCost = calculateYearsToGoalWithCosts(iv, mc, goalValue, rate, afc, avc);
-      const prog = calculateFutureValueProgressionWithCosts(iv, mc, desiredYears, rate, afc, avc);
+      const yearsWithCost = calculateYearsToGoalWithCosts(iv, mc, goalValue, rate, afc, avc, contributionYears);
+      const prog = calculateFutureValueProgressionWithCosts(iv, mc, desiredYears, rate, afc, avc, contributionYears);
       const finalValueAtPlanEnd = prog.length > 0 ? prog[prog.length - 1].totalAccumulated : 0;
       res.push({ rate, yearsWithCost, finalValueAtPlanEnd });
     }
     return res;
-  }, [initialValue, monthlyContribution, goalValue, annualFixedCost, annualVariableCost, desiredYears]);
+  }, [initialValue, monthlyContribution, goalValue, annualFixedCost, annualVariableCost, desiredYears, contributionYears]);
 
   const progressionData = useMemo(() => {
     return calculateFutureValueProgressionWithCosts(
@@ -151,9 +161,10 @@ const App: React.FC = () => {
       desiredYears || 20,
       selectedRate,
       (parseFloat(annualFixedCost) || 0) / 100,
-      parseFloat(annualVariableCost) || 0
+      parseFloat(annualVariableCost) || 0,
+      contributionYears
     );
-  }, [initialValue, monthlyContribution, desiredYears, annualFixedCost, annualVariableCost, selectedRate]);
+  }, [initialValue, monthlyContribution, desiredYears, annualFixedCost, annualVariableCost, selectedRate, contributionYears]);
 
   const standardDeviations = useMemo(() => {
     const rates = [5, 6, 8, 9];
@@ -164,10 +175,10 @@ const App: React.FC = () => {
 
     return rates.map(r => ({
       label: `${r}%`,
-      data: calculateFutureValueProgressionWithCosts(iv, mc, desiredYears || 20, r, afc, avc),
+      data: calculateFutureValueProgressionWithCosts(iv, mc, desiredYears || 20, r, afc, avc, contributionYears),
       color: r < 7 ? '#CBD5E1' : '#94A3B8'
     }));
-  }, [initialValue, monthlyContribution, desiredYears, annualFixedCost, annualVariableCost]);
+  }, [initialValue, monthlyContribution, desiredYears, annualFixedCost, annualVariableCost, contributionYears]);
 
   const getRateSpecificProgression = (rate: number) => {
     return calculateFutureValueProgressionWithCosts(
@@ -176,7 +187,8 @@ const App: React.FC = () => {
       desiredYears || 20,
       rate,
       (parseFloat(annualFixedCost) || 0) / 100,
-      parseFloat(annualVariableCost) || 0
+      parseFloat(annualVariableCost) || 0,
+      contributionYears
     );
   };
 
@@ -191,25 +203,72 @@ const App: React.FC = () => {
     if (fIncome <= 0) return [];
     return [10, 20, 30, 40, 50, 75, 99].map(p => {
         const mc = fIncome * (p / 100);
-        const years = calculateYearsToGoalWithCosts((parseFloat(initialValue) || 0) / 100, mc, goalValue, 7, (parseFloat(annualFixedCost) || 0) / 100, parseFloat(annualVariableCost) || 0);
+        const years = calculateYearsToGoalWithCosts((parseFloat(initialValue) || 0) / 100, mc, goalValue, 7, (parseFloat(annualFixedCost) || 0) / 100, parseFloat(annualVariableCost) || 0, contributionYears);
         return { percent: p, monthlyAmount: mc, yearsNeeded: years };
     });
-  }, [familyIncome, initialValue, goalValue, annualFixedCost, annualVariableCost]);
+  }, [familyIncome, initialValue, goalValue, annualFixedCost, annualVariableCost, contributionYears]);
 
   const isHighNetWorth = useMemo(() => {
       const assetsBrl = (parseFloat(initialValue) || 0) / 100;
       return (assetsBrl / 5.5) >= 400000;
   }, [initialValue]);
 
-  const handlePrint = () => {
-    // Programmatically trigger the browser's print dialog (equivalent to keyboard shortcuts)
-    window.print();
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+  const handlePrint = async () => {
+    const element = document.querySelector('.print-area') as HTMLElement;
+    if (!element) return;
+
+    setIsGeneratingPDF(true);
+    try {
+      // Add a temporary class to adjust styles for PDF generation if needed
+      element.classList.add('pdf-exporting');
+      
+      const canvas = await html2canvas(element, {
+        scale: 2, // Higher resolution
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      let heightLeft = pdfHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft >= 0) {
+        position = heightLeft - pdfHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save('Relatorio_R_Anjos_Consultoria.pdf');
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      // Fallback to browser print if PDF generation fails
+      window.print();
+    } finally {
+      element.classList.remove('pdf-exporting');
+      setIsGeneratingPDF(false);
+    }
   };
 
-  // Add keyboard shortcuts to trigger print action
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Listen for Ctrl+P (Standard) or Ctrl+Shift+R (Requested Shortcut)
       const isCtrlP = (e.ctrlKey || e.metaKey) && e.key === 'p';
       const isCtrlShiftR = (e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'R' || e.key === 'r');
       
@@ -358,6 +417,7 @@ const App: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
                 <PixelCurrencyInput label="Aporte Mensal Pretendido" value={monthlyContribution} onChange={e => setMonthlyContribution(e.target.value)} />
                 <PixelCurrencyInput label="Renda Familiar Mensal" value={familyIncome} onChange={e => setFamilyIncome(e.target.value)} />
+                <PixelInput label="Idade de Fim dos Aportes (Opcional)" value={contributionEndAge} onChange={e => setContributionEndAge(e.target.value)} placeholder={retirementAge || "00"} />
               </div>
 
               <div className="flex flex-col gap-6 items-center max-w-2xl mx-auto">
@@ -473,10 +533,14 @@ const App: React.FC = () => {
 
             <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
               <h3 className="text-xs font-bold uppercase text-slate-400 tracking-widest mb-8 border-b border-slate-100 pb-4">Parâmetros Atuais</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-8">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-8">
                 <div>
                   <p className="text-[9px] uppercase text-slate-400 font-bold mb-1">Janela de Acumulação</p>
                   <p className="text-lg font-bold text-slate-900">{desiredYears} anos</p>
+                </div>
+                <div>
+                  <p className="text-[9px] uppercase text-slate-400 font-bold mb-1">Janela de Aportes</p>
+                  <p className="text-lg font-bold text-slate-900">{contributionYears} anos</p>
                 </div>
                 <div>
                   <p className="text-[9px] uppercase text-slate-400 font-bold mb-1">Renda Alvo</p>
@@ -578,14 +642,18 @@ const App: React.FC = () => {
                         <strong className="text-slate-900"> {formatCurrency((parseFloat(monthlyRetirementIncome)||0)/100)}/mês</strong>. 
                         O diagnóstico revela que o plano atual é <span className={`font-bold ${isPossible ? 'text-emerald-600' : 'text-rose-600'}`}>{isPossible ? 'VIÁVEL' : 'DESAFIADOR'}</span> dentro do horizonte projetado de {desiredYears} anos.
                       </p>
-                      <div className="flex gap-4">
-                         <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="flex gap-4 flex-wrap">
+                         <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-100 min-w-[120px]">
                             <p className="text-[8px] uppercase text-slate-400 font-bold mb-1">Status</p>
                             <p className={`text-sm font-bold ${isPossible ? 'text-emerald-600' : 'text-rose-600'}`}>{isPossible ? 'Em Conformidade' : 'Requer Ajuste'}</p>
                          </div>
-                         <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                         <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-100 min-w-[120px]">
                             <p className="text-[8px] uppercase text-slate-400 font-bold mb-1">Horizonte</p>
                             <p className="text-sm font-bold text-slate-900">{desiredYears} Anos</p>
+                         </div>
+                         <div className="flex-1 p-4 bg-slate-50 rounded-xl border border-slate-100 min-w-[120px]">
+                            <p className="text-[8px] uppercase text-slate-400 font-bold mb-1">Aportes</p>
+                            <p className="text-sm font-bold text-slate-900">{contributionYears} Anos</p>
                          </div>
                       </div>
                     </div>
@@ -647,50 +715,70 @@ const App: React.FC = () => {
                   </div>
                 </section>
 
+                {/* VISÃO ESTRATÉGICA - VÍDEO YOUTUBE */}
+                <section className="no-print">
+                  <h3 className="text-xs font-bold uppercase text-[#C5A059] tracking-[0.3em] mb-8 border-b border-slate-100 pb-2">Assista à nossa Visão Estratégica</h3>
+                  <div className="bg-slate-50 p-4 sm:p-8 rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-lg">
+                      <iframe 
+                        className="w-full h-full"
+                        src="https://www.youtube.com/embed/zbfTAc_8zKI" 
+                        title="R Anjos Consultoria - Visão Estratégica"
+                        frameBorder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                      ></iframe>
+                    </div>
+                    <p className="mt-4 text-[10px] text-slate-400 font-medium text-center uppercase tracking-widest">
+                      Aprofundando conceitos de Liberdade Financeira Internacional
+                    </p>
+                  </div>
+                </section>
+
                 {/* 04. Fale com sua Assessoria Private */}
                 <section>
                   <h3 className="text-xs font-bold uppercase text-[#C5A059] tracking-[0.3em] mb-8 border-b border-slate-100 pb-2">04. Fale com sua Assessoria Private</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <button 
-                      onClick={() => window.open('https://wa.me/seu-numero-aqui?text=Olá, gostaria de saber mais sobre Offshore BVI', '_blank')}
+                      onClick={() => window.open('https://ranjosoffshore.netlify.app', '_blank')}
                       className="p-6 bg-white border border-slate-100 rounded-2xl shadow-sm space-y-3 text-left hover:border-[#C5A059] hover:shadow-md transition-all group"
                     >
                       <div className="flex items-center gap-2">
                         <VaultIcon />
-                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Offshore BVI — 7k USD</h4>
+                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Offshore</h4>
                       </div>
                       <p className="text-[10px] text-slate-500 leading-relaxed font-light">Faça o seu planejamento sucessório com trust e offshore company nas Ilhas Virgens Britânicas (BVI).</p>
                     </button>
 
                     <button 
-                      onClick={() => window.open('https://wa.me/seu-numero-aqui?text=Olá, gostaria de saber mais sobre taxas de Câmbio Private', '_blank')}
+                      onClick={() => window.open('https://ranjosremessa.netlify.app', '_blank')}
                       className="p-6 bg-white border border-slate-100 rounded-2xl shadow-sm space-y-3 text-left hover:border-[#C5A059] hover:shadow-md transition-all group"
                     >
                       <div className="flex items-center gap-2">
                         <CoinIcon />
-                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Câmbio — Spread 0,4%</h4>
+                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Câmbio</h4>
                       </div>
                       <p className="text-[10px] text-slate-500 leading-relaxed font-light">O menor spread do mercado institucional disponível para clientes private, garantindo eficiência na remessa.</p>
                     </button>
 
                     <button 
-                      onClick={() => window.open('https://wa.me/seu-numero-aqui?text=Olá, gostaria de saber mais sobre Consultoria de Investimentos Internacionais', '_blank')}
+                      onClick={() => window.open('https://api.whatsapp.com/send/?phone=5534991299890', '_blank')}
                       className="p-6 bg-white border border-slate-100 rounded-2xl shadow-sm space-y-3 text-left hover:border-[#C5A059] hover:shadow-md transition-all group"
                     >
                       <div className="flex items-center gap-2">
                         <GlobeIcon />
-                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Investimentos Inter. — 4k USD</h4>
+                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Plano de Aposentadoria (Investimentos Inter)</h4>
                       </div>
                       <p className="text-[10px] text-slate-500 leading-relaxed font-light">Abertura de conta em corretora internacional e gestão ativa da carteira focada em juros compostos em dólar.</p>
                     </button>
 
                     <button 
-                      onClick={() => window.open('https://wa.me/seu-numero-aqui?text=Olá, gostaria de agendar uma reunião de Consultoria Sênior', '_blank')}
+                      onClick={() => window.open('https://api.whatsapp.com/send/?phone=5534991299890', '_blank')}
                       className="p-6 bg-white border border-slate-100 rounded-2xl shadow-sm space-y-3 text-left hover:border-[#C5A059] hover:shadow-md transition-all group"
                     >
                       <div className="flex items-center gap-2">
                         <SeniorIcon />
-                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Consultoria Sênior — 300 USD/h</h4>
+                        <h4 className="text-[11px] font-bold text-slate-800 uppercase tracking-tight group-hover:text-[#C5A059]">Consulta</h4>
                       </div>
                       <p className="text-[10px] text-slate-500 leading-relaxed font-light">Sessão individual com um de nossos planejadores sêniores para análise técnica e estratégica personalizada.</p>
                     </button>
@@ -703,10 +791,23 @@ const App: React.FC = () => {
             <div className="flex flex-col gap-6 items-center no-print">
                <button 
                   onClick={handlePrint}
-                  className="w-full max-w-4xl flex items-center justify-center gap-3 bg-indigo-600 text-white rounded-2xl py-5 font-bold text-sm uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-200"
+                  disabled={isGeneratingPDF}
+                  className={`w-full max-w-4xl flex items-center justify-center gap-3 bg-indigo-600 text-white rounded-2xl py-5 font-bold text-sm uppercase tracking-widest transition-all shadow-xl shadow-indigo-200 ${isGeneratingPDF ? 'opacity-70 cursor-not-allowed' : 'hover:bg-indigo-700'}`}
                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-                  Imprimir / Salvar Relatório em PDF
+                  {isGeneratingPDF ? (
+                    <div className="flex items-center gap-3">
+                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Gerando PDF...
+                    </div>
+                  ) : (
+                    <>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"></path><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                      Imprimir / Salvar Relatório em PDF
+                    </>
+                  )}
                </button>
                <button onClick={() => { setStep(1); setTypingComplete(false); }} className="text-slate-400 text-[10px] uppercase font-bold tracking-[0.4em] hover:text-slate-900 text-center">Reiniciar Diagnóstico</button>
             </div>

@@ -13,19 +13,27 @@ export const calculateFutureValue = (
   initialValue: number,
   monthlyContribution: number,
   years: number,
-  annualRate: number
+  annualRate: number,
+  contributionYears?: number
 ): number => {
-  if (annualRate <= -100) return initialValue + monthlyContribution * years * 12;
+  if (annualRate <= -100) return initialValue + monthlyContribution * (contributionYears !== undefined ? Math.min(years, contributionYears) : years) * 12;
   const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
   const months = years * 12;
+  const contributionMonths = contributionYears !== undefined ? Math.floor(contributionYears * 12) : months;
 
   if (monthlyRate === 0) {
-    return initialValue + monthlyContribution * months;
+    return initialValue + monthlyContribution * Math.min(months, contributionMonths);
   }
 
   const futureValueOfInitial = initialValue * Math.pow(1 + monthlyRate, months);
-  const futureValueOfContributions =
-    monthlyContribution * ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate);
+  
+  let futureValueOfContributions = 0;
+  if (contributionMonths > 0) {
+    const actualContributionMonths = Math.min(months, contributionMonths);
+    const valueAtEndOfContributions = monthlyContribution * ((Math.pow(1 + monthlyRate, actualContributionMonths) - 1) / monthlyRate);
+    const remainingMonths = months - actualContributionMonths;
+    futureValueOfContributions = valueAtEndOfContributions * Math.pow(1 + monthlyRate, remainingMonths);
+  }
 
   return futureValueOfInitial + futureValueOfContributions;
 };
@@ -84,16 +92,19 @@ export const calculateFutureValueProgressionWithCosts = (
   years: number,
   annualRate: number,
   annualFixedCost: number,
-  annualVariableCostPercent: number
+  annualVariableCostPercent: number,
+  contributionYears?: number
 ): MonthlyData[] => {
   if (annualRate < -100 || years <= 0) return [];
   
   const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
   const months = Math.floor(years * 12);
+  const contributionMonths = contributionYears !== undefined ? Math.floor(contributionYears * 12) : months;
   const progression: MonthlyData[] = [];
 
   let currentBalance = initialValue;
   let totalInterest = 0;
+  let totalInvested = initialValue;
 
   progression.push({
     month: 0,
@@ -106,7 +117,12 @@ export const calculateFutureValueProgressionWithCosts = (
   for (let i = 1; i <= months; i++) {
     const interestEarned = currentBalance * monthlyRate;
     currentBalance += interestEarned;
-    currentBalance += monthlyContribution;
+    
+    if (i <= contributionMonths) {
+      currentBalance += monthlyContribution;
+      totalInvested += monthlyContribution;
+    }
+    
     totalInterest += interestEarned;
 
     // Apply annual costs at the end of each year
@@ -119,7 +135,7 @@ export const calculateFutureValueProgressionWithCosts = (
     progression.push({
       month: i,
       interest: interestEarned,
-      totalInvested: initialValue + monthlyContribution * i,
+      totalInvested: totalInvested,
       totalInterest: totalInterest,
       totalAccumulated: currentBalance,
     });
@@ -170,7 +186,8 @@ export const calculateYearsToGoalWithCosts = (
   goalValue: number,
   annualRate: number,
   annualFixedCost: number,
-  annualVariableCostPercent: number
+  annualVariableCostPercent: number,
+  contributionYears?: number
 ): number => {
   if (initialValue >= goalValue) {
     return 0;
@@ -178,6 +195,7 @@ export const calculateYearsToGoalWithCosts = (
 
   const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
   const maxMonths = 100 * 12; // 100 years limit to prevent infinite loops
+  const contributionMonths = contributionYears !== undefined ? Math.floor(contributionYears * 12) : maxMonths;
 
   let currentBalance = initialValue;
 
@@ -185,7 +203,9 @@ export const calculateYearsToGoalWithCosts = (
     // Add interest for the month
     currentBalance += currentBalance * monthlyRate;
     // Add monthly contribution
-    currentBalance += monthlyContribution;
+    if (month <= contributionMonths) {
+      currentBalance += monthlyContribution;
+    }
 
     // Apply annual costs at the end of each year
     if (month % 12 === 0) {
@@ -195,7 +215,7 @@ export const calculateYearsToGoalWithCosts = (
     }
 
     // If balance becomes negative, it's unlikely to reach the goal
-    if (currentBalance < 0 && monthlyContribution <= 0) {
+    if (currentBalance < 0 && (month > contributionMonths || monthlyContribution <= 0)) {
         return Infinity;
     }
 
@@ -212,13 +232,15 @@ export const calculateMonthlyContribution = (
   initialValue: number,
   goalValue: number,
   years: number,
-  annualRate: number
+  annualRate: number,
+  contributionYears?: number
 ): number => {
   if (annualRate <= -100) return Infinity;
   const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
   const months = years * 12;
+  const contributionMonths = contributionYears !== undefined ? Math.floor(contributionYears * 12) : months;
 
-  if (months <= 0) {
+  if (months <= 0 || contributionMonths <= 0) {
       return initialValue >= goalValue ? 0 : Infinity;
   }
 
@@ -228,11 +250,14 @@ export const calculateMonthlyContribution = (
   }
 
   if (monthlyRate === 0) {
-    return (goalValue - initialValue) / months;
+    return (goalValue - initialValue) / contributionMonths;
   }
 
   const numerator = goalValue - futureValueOfInitial;
-  const denominator = (Math.pow(1 + monthlyRate, months) - 1) / monthlyRate;
+  const actualContributionMonths = Math.min(months, contributionMonths);
+  const remainingMonths = months - actualContributionMonths;
+  
+  const denominator = ((Math.pow(1 + monthlyRate, actualContributionMonths) - 1) / monthlyRate) * Math.pow(1 + monthlyRate, remainingMonths);
   
   if (denominator === 0) return Infinity;
 
@@ -245,16 +270,20 @@ export const calculateMonthlyContributionWithCosts = (
   years: number,
   annualRate: number,
   annualFixedCost: number,
-  annualVariableCostPercent: number
+  annualVariableCostPercent: number,
+  contributionYears?: number
 ): number => {
   const getFinalValue = (monthlyContribution: number): number => {
     const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
     const months = years * 12;
+    const contributionMonths = contributionYears !== undefined ? Math.floor(contributionYears * 12) : months;
     let currentBalance = initialValue;
 
     for (let i = 1; i <= months; i++) {
       currentBalance += currentBalance * monthlyRate;
-      currentBalance += monthlyContribution;
+      if (i <= contributionMonths) {
+        currentBalance += monthlyContribution;
+      }
       if (i > 0 && i % 12 === 0) {
         const variableCost = currentBalance * (annualVariableCostPercent / 100);
         currentBalance -= annualFixedCost;
